@@ -7,7 +7,7 @@ C++11 cross-platform header-only library for searching files in directory.
 
 Basic usage:
 
-    for(std::string s: dirc::listFiles("some/folder")
+    for(std::string s: dirc::listFiles("some/folder"))
     {
         // s contains filename
     }
