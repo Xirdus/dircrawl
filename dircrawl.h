@@ -189,10 +189,10 @@ public:
     CrawlerIterator& operator=(const CrawlerIterator&) = default;
     CrawlerIterator& operator=(CrawlerIterator&&) = default;
 
-    CrawlerIterator(const std::string& dir_path, CrawlMode mode):
-        dir_paths({dir_path}), mode(mode)
+    CrawlerIterator(const std::string& path, CrawlMode mode):
+        base_path(path + platform::separator), mode(mode)
     {
-        dir_handles.emplace(platform::openHandle(dir_path), &platform::closeHandle);
+        dir_handles.emplace(platform::openHandle(base_path), &platform::closeHandle);
         ++*this;
     }
 
@@ -210,12 +210,15 @@ public:
                 item_path = platform::getNextItem(dir_handles.top().get());
                 if (item_path.empty())
                 {
-                    dir_paths.pop_back();
+                    if (!dir_names.empty())
+                    {
+                        dir_names.pop_back();
+                    }
                     dir_handles.pop();
                     break;
                 }
 
-                auto type = platform::getType(buildPath() + item_path);
+                auto type = platform::getType(base_path + buildPath() + item_path);
                 if (mode != CrawlMode::flat_directory && type == EntryType::file)
                 {
                     return *this;
@@ -229,7 +232,7 @@ public:
                     else if (mode == CrawlMode::recursive_file)
                     {
                         dir_handles.emplace(platform::openHandle(buildPath() + item_path), &platform::closeHandle);
-                        dir_paths.emplace_back(item_path);
+                        dir_names.emplace_back(item_path);
                     }
 
                 }
@@ -246,12 +249,14 @@ public:
 
     reference operator*() const
     {
-        return item_path;
+        value = buildPath('/') + item_path;
+        return value;
     }
 
     pointer operator->() const
     {
-        return &item_path;
+        value = buildPath('/') + item_path;
+        return &value;
     }
 
     bool operator==(const CrawlerIterator& rhs)
@@ -265,20 +270,22 @@ public:
     }
 
 private:
-    std::string buildPath()
+    std::string buildPath(char separator = platform::separator) const
     {
         std::ostringstream path;
-        for (auto s: dir_paths)
+        for (auto s: dir_names)
         {
-            path << s << platform::separator;
+            path << s << separator;
         }
         return path.str();
     }
 
-    std::deque<std::string> dir_paths;
+    std::string base_path;
     CrawlMode mode;
+    std::deque<std::string> dir_names;
     std::stack<std::shared_ptr<std::remove_pointer<platform::DirHandle>::type>> dir_handles;
     std::string item_path;
+    mutable std::string value;
 };
 
 class DirectoryCrawler
