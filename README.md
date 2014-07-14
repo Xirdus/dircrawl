@@ -14,5 +14,8 @@ Basic usage:
 
 ###Functions
 
-* `listFiles(const std::string& path)` - returns an iterable object listing files in given path (absolute or relative to working directory)
-* `listDirectories(const std::string& path)` - returns an iterable object listing subdirectories in given path (absolute or relative to working directory)
+* `listFiles(const std::string& path)` - returns an iterable object listing files in given path
+* `listDirectories(const std::string& path)` - returns an iterable object listing subdirectories in given path
+* `listFilesRecursive(const std::string& path)` - returns an iterable object listing files in given path and all its subdirectories
+
+Note: the path must be absolute or relative to current directory

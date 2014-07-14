@@ -27,8 +27,11 @@
 #include <string>
 #include <memory>
 #include <utility>
+#include <stack>
+#include <sstream>
 
 #if defined(_WIN32) && not defined (DIRCRAWL_USE_POSIX) // use Windows API
+#define WIN32_LEAN_AND_MEAN
 #include <windows.h>
 #else // use POSIX API
 #include <dirent.h>
@@ -42,6 +45,13 @@ enum class EntryType
     unknown,
     file,
     directory
+};
+
+enum class CrawlMode
+{
+    flat_file,
+    flat_directory,
+    recursive_file
 };
 
 #if defined(_WIN32) && not defined (DIRCRAWL_USE_POSIX) // use Windows API
@@ -170,81 +180,111 @@ inline EntryType getType(const std::string& path)
 }
 #endif
 
-template <EntryType type>
-class FlatIterator: std::iterator<std::input_iterator_tag, const std::string>
+class CrawlerIterator: public std::iterator<std::input_iterator_tag, const std::string>
 {
 public:
-    FlatIterator() = default;
-    FlatIterator(const FlatIterator&) = default;
-    FlatIterator(FlatIterator&&) = default;
-    FlatIterator& operator=(const FlatIterator&) = default;
-    FlatIterator& operator=(FlatIterator&&) = default;
+    CrawlerIterator() = default;
+    CrawlerIterator(const CrawlerIterator&) = default;
+    CrawlerIterator(CrawlerIterator&&) = default;
+    CrawlerIterator& operator=(const CrawlerIterator&) = default;
+    CrawlerIterator& operator=(CrawlerIterator&&) = default;
 
-    FlatIterator(const std::string& dir_path):
-        dir_path(dir_path)
+    CrawlerIterator(const std::string& dir_path, CrawlMode mode):
+        dir_paths({dir_path}), mode(mode)
     {
-        dir.reset(platform::openHandle(dir_path.c_str()), &platform::closeHandle);
+        dir_handles.emplace(platform::openHandle(dir_path), &platform::closeHandle);
         ++*this;
     }
 
-    FlatIterator& operator++()
+    CrawlerIterator& operator++()
     {
-        if (!dir)
+        while (true)
         {
-            return *this;
-        }
-
-        do
-        {
-            path = platform::getNextItem(dir.get());
-            if (path.empty())
+            if (dir_handles.empty())
             {
-                dir.reset();
                 return *this;
             }
+
+            while (true)
+            {
+                item_path = platform::getNextItem(dir_handles.top().get());
+                if (item_path.empty())
+                {
+                    dir_paths.pop_back();
+                    dir_handles.pop();
+                    break;
+                }
+
+                auto type = platform::getType(buildPath() + item_path);
+                if (mode != CrawlMode::flat_directory && type == EntryType::file)
+                {
+                    return *this;
+                }
+                else if (type == EntryType::directory)
+                {
+                    if (mode == CrawlMode::flat_directory)
+                    {
+                        return *this;
+                    }
+                    else if (mode == CrawlMode::recursive_file)
+                    {
+                        dir_handles.emplace(platform::openHandle(buildPath() + item_path), &platform::closeHandle);
+                        dir_paths.emplace_back(item_path);
+                    }
+
+                }
+            }
         }
-        while (platform::getType(dir_path + platform::separator + path) != type);
-        return *this;
     }
 
-    FlatIterator operator++(int)
+    CrawlerIterator operator++(int)
     {
-        FlatIterator tmp = *this;
+        CrawlerIterator tmp = *this;
         ++*this;
         return tmp;
     }
 
     reference operator*() const
     {
-        return path;
+        return item_path;
     }
 
     pointer operator->() const
     {
-        return &path;
+        return &item_path;
     }
 
-    bool operator==(const FlatIterator& rhs)
+    bool operator==(const CrawlerIterator& rhs)
     {
-        return (!dir && !rhs.dir) || (dir.get() == rhs.dir.get() && path == rhs.path);
+        return (dir_handles == rhs.dir_handles && item_path == rhs.item_path);
     }
 
-    bool operator!=(const FlatIterator& rhs)
+    bool operator!=(const CrawlerIterator& rhs)
     {
         return !(*this == rhs);
     }
 
 private:
-    std::shared_ptr<std::remove_pointer<platform::DirHandle>::type> dir;
-    std::string dir_path;
-    std::string path;
+    std::string buildPath()
+    {
+        std::ostringstream path;
+        for (auto s: dir_paths)
+        {
+            path << s << platform::separator;
+        }
+        return path.str();
+    }
+
+    std::deque<std::string> dir_paths;
+    CrawlMode mode;
+    std::stack<std::shared_ptr<std::remove_pointer<platform::DirHandle>::type>> dir_handles;
+    std::string item_path;
 };
 
-template <typename IteratorType>
 class DirectoryCrawler
 {
 public:
-    typedef IteratorType iterator;
+    typedef CrawlerIterator iterator;
 
     DirectoryCrawler() = default;
     DirectoryCrawler(const DirectoryCrawler&) = default;
@@ -252,31 +292,37 @@ public:
     DirectoryCrawler& operator=(const DirectoryCrawler&) = default;
     DirectoryCrawler& operator=(DirectoryCrawler&&) = default;
 
-    DirectoryCrawler(const std::string& path):
-        path(path) {}
+    DirectoryCrawler(const std::string& path, CrawlMode mode):
+        path(path), mode(mode) {}
 
-    IteratorType begin()
+    CrawlerIterator begin()
     {
-        return {path};
+        return {path, mode};
     }
 
-    IteratorType end()
+    CrawlerIterator end()
     {
         return {};
     }
 
 private:
     std::string path;
+    CrawlMode mode;
 };
 
-inline DirectoryCrawler<FlatIterator<EntryType::file>> listFiles(const std::string& path)
+inline DirectoryCrawler listFiles(const std::string& path)
 {
-    return {path};
+    return {path, CrawlMode::flat_file};
 }
 
-inline DirectoryCrawler<FlatIterator<EntryType::directory>> listDirectories(const std::string& path)
+inline DirectoryCrawler listDirectories(const std::string& path)
 {
-    return {path};
+    return {path, CrawlMode::flat_directory};
+}
+
+inline DirectoryCrawler listFilesRecursive(const std::string& path)
+{
+    return {path, CrawlMode::recursive_file};
 }
 
 }
