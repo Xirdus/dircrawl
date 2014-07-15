@@ -146,6 +146,10 @@ inline std::string getNextItem(DirHandle handle)
 {
     while (true)
     {
+        if (handle == nullptr)
+        {
+            return {};
+        }
         auto item = readdir(handle);
         if (item == nullptr)
         {
@@ -231,7 +235,7 @@ public:
                     }
                     else if (mode == CrawlMode::recursive_file)
                     {
-                        dir_handles.emplace(platform::openHandle(buildPath() + item_path), &platform::closeHandle);
+                        dir_handles.emplace(platform::openHandle(base_path + buildPath() + item_path), &platform::closeHandle);
                         dir_names.emplace_back(item_path);
                     }
 
