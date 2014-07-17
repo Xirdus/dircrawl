@@ -2,6 +2,8 @@
  *
  * Copyright (c) 2014 Xirdus
  *
+ * Original source: https://github.com/Xirdus/dircrawl
+ *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
  * in the Software without restriction, including without limitation the rights
@@ -30,159 +32,13 @@
 #include <stack>
 #include <sstream>
 
-#if defined(_WIN32) && not defined (DIRCRAWL_USE_POSIX) // use Windows API
-#define WIN32_LEAN_AND_MEAN
-#include <windows.h>
-#else // use POSIX API
-#include <dirent.h>
-#include <sys/stat.h>
+#if defined(_WIN32) && not defined (DIRCRAWL_USE_POSIX)
+#include "dircrawl_winapi.h"
+#else
+#include "dircrawl_posix.h"
 #endif
 
 namespace dirc {
-
-enum class EntryType
-{
-    unknown,
-    file,
-    directory
-};
-
-enum class CrawlMode
-{
-    flat_file,
-    flat_directory,
-    recursive_file
-};
-
-#if defined(_WIN32) && not defined (DIRCRAWL_USE_POSIX) // use Windows API
-
-namespace platform {
-
-char separator = '\\';
-
-struct DirHandleWrapper
-{
-    std::string path;
-    HANDLE handle;
-};
-typedef DirHandleWrapper* DirHandle;
-
-inline DirHandle openHandle(const std::string& path)
-{
-    return new DirHandleWrapper({path + "\\*", nullptr});
-}
-
-inline void closeHandle(DirHandle handle)
-{
-    if (handle->handle != nullptr && handle->handle != INVALID_HANDLE_VALUE)
-    {
-        FindClose(handle->handle);
-    }
-    delete handle;
-}
-
-inline std::string getNextItem(DirHandle handle)
-{
-    WIN32_FIND_DATAA data;
-    while (true)
-    {
-
-        if (handle->handle == nullptr)
-        {
-            handle->handle = FindFirstFileA(handle->path.c_str(), &data);
-            if (handle->handle == INVALID_HANDLE_VALUE)
-            {
-                return {};
-            }
-        }
-        else
-        {
-            if (!FindNextFileA(handle->handle, &data))
-            {
-                return {};
-            }
-        }
-        std::string name = data.cFileName;
-        if (name != "." && name != "..")
-        {
-            return name;
-        }
-    }
-}
-
-inline EntryType getType(const std::string& path)
-{
-    auto type = GetFileAttributesA(path.c_str());
-    if (type & FILE_ATTRIBUTE_DIRECTORY)
-    {
-        return EntryType::directory;
-    }
-    else
-    {
-        return EntryType::file;
-    }
-}
-
-}
-
-#else // use POSIX API
-
-namespace platform {
-
-typedef DIR* DirHandle;
-char separator = '/';
-
-inline DirHandle openHandle(const std::string& path)
-{
-    return opendir(path.c_str());
-}
-
-inline void closeHandle(DirHandle handle)
-{
-    closedir(handle);
-}
-
-inline std::string getNextItem(DirHandle handle)
-{
-    while (true)
-    {
-        if (handle == nullptr)
-        {
-            return {};
-        }
-        auto item = readdir(handle);
-        if (item == nullptr)
-        {
-            return {};
-        }
-        std::string name = item->d_name;
-        if (name != "." && name != "..")
-        {
-            return name;
-        }
-    }
-}
-
-inline EntryType getType(const std::string& path)
-{
-    struct stat statinfo;
-    stat(path.c_str(), &statinfo);
-    if (S_ISREG(statinfo.st_mode))
-    {
-        return EntryType::file;
-    }
-    else if (S_ISDIR(statinfo.st_mode))
-    {
-        return EntryType::directory;
-    }
-    else
-    {
-        return EntryType::unknown;
-    }
-}
-
-}
-#endif
 
 class CrawlerIterator: public std::iterator<std::input_iterator_tag, const std::string>
 {
@@ -196,7 +52,7 @@ public:
     CrawlerIterator(const std::string& path, CrawlMode mode):
         base_path(path + platform::separator), mode(mode)
     {
-        dir_handles.emplace(platform::openHandle(base_path), &platform::closeHandle);
+        dir_handles.emplace(platform::getHandle(base_path));
         ++*this;
     }
 
@@ -211,7 +67,7 @@ public:
 
             while (true)
             {
-                item_path = platform::getNextItem(dir_handles.top().get());
+                item_path = platform::getNextItem(dir_handles.top());
                 if (item_path.empty())
                 {
                     if (!dir_names.empty())
@@ -223,7 +79,7 @@ public:
                 }
 
                 auto type = platform::getType(base_path + buildPath() + item_path);
-                if (mode != CrawlMode::flat_directory && type == EntryType::file)
+                if (mode != CrawlMode::flat_file && type == EntryType::file)
                 {
                     return *this;
                 }
@@ -235,7 +91,7 @@ public:
                     }
                     else if (mode == CrawlMode::recursive_file)
                     {
-                        dir_handles.emplace(platform::openHandle(base_path + buildPath() + item_path), &platform::closeHandle);
+                        dir_handles.emplace(platform::getHandle(base_path + buildPath() + item_path));
                         dir_names.emplace_back(item_path);
                     }
 
@@ -287,7 +143,7 @@ private:
     std::string base_path;
     CrawlMode mode;
     std::deque<std::string> dir_names;
-    std::stack<std::shared_ptr<std::remove_pointer<platform::DirHandle>::type>> dir_handles;
+    std::stack<platform::DirHandle> dir_handles;
     std::string item_path;
     mutable std::string value;
 };
