@@ -32,7 +32,7 @@
 #include <stack>
 #include <sstream>
 
-#if defined(_WIN32) && not defined (DIRCRAWL_USE_POSIX)
+#if defined(_WIN32)
 #include "dircrawl_winapi.h"
 #else
 #include "dircrawl_posix.h"
@@ -43,14 +43,14 @@ namespace dirc {
 class CrawlerIterator: public std::iterator<std::input_iterator_tag, const std::string>
 {
 public:
-    CrawlerIterator() = default;
+    CrawlerIterator(): separator('/') {}
     CrawlerIterator(const CrawlerIterator&) = default;
     CrawlerIterator(CrawlerIterator&&) = default;
     CrawlerIterator& operator=(const CrawlerIterator&) = default;
     CrawlerIterator& operator=(CrawlerIterator&&) = default;
 
-    CrawlerIterator(const std::string& path, CrawlMode mode):
-        base_path(path + platform::separator), mode(mode)
+    CrawlerIterator(const std::string& path, CrawlMode mode, char separator):
+        separator(separator), base_path(path + separator), mode(mode)
     {
         dir_handles.emplace(platform::getHandle(base_path));
         ++*this;
@@ -109,13 +109,13 @@ public:
 
     reference operator*() const
     {
-        value = buildPath('/') + item_path;
+        value = buildPath() + item_path;
         return value;
     }
 
     pointer operator->() const
     {
-        value = buildPath('/') + item_path;
+        value = buildPath() + item_path;
         return &value;
     }
 
@@ -130,7 +130,7 @@ public:
     }
 
 private:
-    std::string buildPath(char separator = platform::separator) const
+    std::string buildPath() const
     {
         std::ostringstream path;
         for (auto s: dir_names)
@@ -140,6 +140,7 @@ private:
         return path.str();
     }
 
+    char separator;
     std::string base_path;
     CrawlMode mode;
     std::deque<std::string> dir_names;
@@ -164,7 +165,7 @@ public:
 
     CrawlerIterator begin()
     {
-        return {path, mode};
+        return {path, mode, separator};
     }
 
     CrawlerIterator end()
@@ -172,9 +173,16 @@ public:
         return {};
     }
 
+    DirectoryCrawler& useBackslashes()
+    {
+        separator = '\\';
+        return *this;
+    }
+
 private:
     std::string path;
     CrawlMode mode;
+    char separator = '/';
 };
 
 inline DirectoryCrawler listFiles(const std::string& path)

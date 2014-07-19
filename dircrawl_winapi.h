@@ -29,7 +29,9 @@
 #define WIN32_LEAN_AND_MEAN
 #include <string>
 #include <memory>
+#include <cwchar>
 #include <windows.h>
+#include <utf8.h>
 
 #include "dircrawl_types.h"
 
@@ -40,46 +42,76 @@ char separator = '\\';
 
 struct DirHandleWrapper
 {
-    std::string path;
+    std::wstring path;
     HANDLE handle;
 };
 typedef std::shared_ptr<DirHandleWrapper> DirHandle;
 
+inline std::wstring preparePath(const std::string& path)
+{
+    std::wstring path_utf16;
+    try
+    {
+        utf8::utf8to16(path.begin(), path.end(), std::back_inserter(path_utf16));
+    }
+    catch (utf8::exception)
+    {
+        return {};
+    }
+    for (wchar_t& c: path_utf16)
+    {
+        if (c == L'/')
+        {
+            c = L'\\';
+        }
+    }
+    return path_utf16;
+}
+
 inline DirHandle getHandle(const std::string& path)
 {
-    return {new DirHandleWrapper{path, nullptr},
-            [](DirHandleWrapper* handle)
-            {
-                if (handle->handle != nullptr && handle->handle != INVALID_HANDLE_VALUE)
+    std::wstring path_utf16 = preparePath(path);
+    if (path_utf16.empty())
+    {
+        return nullptr;
+    }
+    else
+    {
+        return {new DirHandleWrapper{path_utf16, nullptr},
+                [](DirHandleWrapper* handle)
                 {
-                    FindClose(handle->handle);
-                }
-                delete handle;
-            }};
+                    if (handle->handle != nullptr && handle->handle != INVALID_HANDLE_VALUE)
+                    {
+                        FindClose(handle->handle);
+                    }
+                    delete handle;
+                }};
+    }
 }
 
 inline std::string getNextItem(DirHandle handle)
 {
-    WIN32_FIND_DATAA data;
+    WIN32_FIND_DATAW data;
     while (true)
     {
         if (handle->handle == nullptr)
         {
-            handle->handle = FindFirstFileA((handle->path + "\\*").c_str(), &data);
+            handle->handle = FindFirstFileW((handle->path + L"\\*").c_str(), &data);
             if (handle->handle == INVALID_HANDLE_VALUE)
             {
-                std::cout << "dupa " << GetLastError() << '\n';
                 return {};
             }
         }
         else
         {
-            if (!FindNextFileA(handle->handle, &data))
+            if (!FindNextFileW(handle->handle, &data))
             {
                 return {};
             }
         }
-        std::string name = data.cFileName;
+        std::string name;
+        utf8::unchecked::utf16to8(data.cFileName, data.cFileName + wcslen(data.cFileName),
+                std::back_inserter(name));
         if (name != "." && name != "..")
         {
             return name;
@@ -89,7 +121,13 @@ inline std::string getNextItem(DirHandle handle)
 
 inline EntryType getType(const std::string& path)
 {
-    auto type = GetFileAttributesA(path.c_str());
+    std::wstring path_utf16 = preparePath(path);
+    if (path_utf16.empty())
+    {
+        return EntryType::unknown;
+    }
+
+    auto type = GetFileAttributesW(path_utf16.c_str());
     if (type & FILE_ATTRIBUTE_DIRECTORY)
     {
         return EntryType::directory;
